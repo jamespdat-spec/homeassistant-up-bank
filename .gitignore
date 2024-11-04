@@ -1,5 +1,6 @@
 #HA Config folder
 config/
 
-#PY Cache
-custom_components/up/__pycache__/*
+# Ignore all __pycache__ folders
+__pycache__/
+
