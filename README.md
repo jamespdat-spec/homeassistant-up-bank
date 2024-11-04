@@ -17,7 +17,7 @@ The easiest way is to install via HACS, see https://github.com/hacs/integration 
 5. Search for HA UP in the list at the top and install this integration - it will have the little Up logo
 6. Restart Home Assistant
 7. Go to regular e.g. Integrations (e.g. Settings -> Devices &amp; Services -> (ADD INTEGRATION) _(bottom right)_
-8. Search for and add Up Bank for Home Assistant
+8. Search for and add Up Bank for Home Assistant - click the three small dots on the right of the line and choose DOWNLOAD
 9. Get your UP API key from: https://api.up.com.au/getting_started
 10. Enter the API key on the config screen
 
