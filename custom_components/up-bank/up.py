@@ -2,6 +2,7 @@ import aiohttp
 import logging
 
 _LOGGER = logging.getLogger(__name__)
+#_LOGGER.setLevel(logging.DEBUG)  # Ensure debug-level messages are logged
 
 BASE_URL = "https://api.up.com.au/api/v1"
 
@@ -14,31 +15,41 @@ class UP:
             params = {}
         headers = {"Authorization": f"Bearer {self.api_key}"}
         
+        _LOGGER.debug(f"Making {method.upper()} request to {BASE_URL + endpoint} with headers: {headers} and params: {params}")
+        
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
                 async with session.request(method, BASE_URL + endpoint, params=params) as resp:
+                    _LOGGER.debug(f"Received response status: {resp.status}")
+                    
                     if resp.status == 401:
                         _LOGGER.error("Unauthorized: Invalid API Key")
                         return None
                     if resp.status != 200:
                         _LOGGER.error(f"Error: Received status code {resp.status}")
                         return None
-                    return await resp.json()
+                    
+                    response_data = await resp.json()
+                    _LOGGER.debug(f"Response JSON: {response_data}")
+                    return response_data
             except aiohttp.ClientError as e:
                 _LOGGER.error(f"Network error occurred: {e}")
                 return None
 
     async def test(self, api_key=None) -> bool:
-        # Use provided api_key temporarily if given, otherwise use the instance's api_key
         original_key = self.api_key
         if api_key:
             self.api_key = api_key
         
         try:
             result = await self.call("/util/ping")
-            return result is not None and result.get("status") == "ok"
+            if result is not None:
+                _LOGGER.debug("API key validated successfully.")
+                return True
+            else:
+                _LOGGER.error("API key validation failed.")
+                return False
         finally:
-            # Revert to original API key
             self.api_key = original_key
 
     async def get_accounts(self):
@@ -51,8 +62,8 @@ class UP:
         for account in result.get('data', []):
             details = BankAccount(account)
             accounts[details.id] = details
+        _LOGGER.debug(f"Retrieved accounts: {accounts}")
         return accounts
-
 
 class BankAccount:
     def __init__(self, data):
