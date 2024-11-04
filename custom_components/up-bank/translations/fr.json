@@ -1,0 +1,13 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Configuration pour l'intégration de banque de Up",
+                "description": "Entrez la clé API pour UP, obtenez-la sur https://api.up.com.au/getting_started",
+                "data": {
+                    "api_key": "Clé API"
+                }
+            }
+        }
+    }
+}

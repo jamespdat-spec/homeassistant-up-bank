@@ -1,0 +1,13 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Konfigurazation für Up Bank Integration",
+                "description": "Bitte API token eingeben. Von hier erhaltbar: https://api.up.com.au/getting_started",
+                "data": {
+                    "api_key": "API Key"
+                }
+            }
+        }
+    }
+}

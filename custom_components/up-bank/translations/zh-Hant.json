@@ -1,0 +1,13 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Up整合的配置",
+                "description": "輸入UP的API密鑰，可從 https://api.up.com.au/getting_started 獲取",
+                "data": {
+                    "api_key": "API密鑰"
+                }
+            }
+        }
+    }
+}

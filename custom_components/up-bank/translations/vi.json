@@ -1,0 +1,13 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Cấu hình cho Tích hợp Up",
+                "description": "Nhập khóa API cho UP, lấy từ https://api.up.com.au/getting_started",
+                "data": {
+                    "api_key": "Khóa API"
+                }
+            }
+        }
+    }
+}
