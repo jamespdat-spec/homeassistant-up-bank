@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Config for Up Integration",
-                "description": "Enter the API key for UP",
+                "description": "Enter the API key for UP, get this from https://api.up.com.au/getting_started",
                 "data": {
                     "api_key": "API Key"
                 }
