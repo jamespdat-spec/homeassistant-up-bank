@@ -1,6 +1,6 @@
 {
     "domain": "up-bank",
-    "name": "Up Bank Integration",
+    "name": "Up Bank Integration for Home Assistant",
     "dependencies": ["http"],
     "codeowners": ["@jay-oswald", "@richardsj"],
     "version": "0.3.1",
