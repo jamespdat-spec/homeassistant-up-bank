@@ -13,6 +13,7 @@ class UP:
         if params is None:
             params = {}
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
                 async with session.request(method, BASE_URL + endpoint, params=params) as resp:
@@ -27,11 +28,18 @@ class UP:
                 _LOGGER.error(f"Network error occurred: {e}")
                 return None
 
-    async def test(self) -> bool:
-        result = await self.call("/util/ping")
-        if result is not None:
-            return True
-        return False
+    async def test(self, api_key=None) -> bool:
+        # Use provided api_key temporarily if given, otherwise use the instance's api_key
+        original_key = self.api_key
+        if api_key:
+            self.api_key = api_key
+        
+        try:
+            result = await self.call("/util/ping")
+            return result is not None and result.get("status") == "ok"
+        finally:
+            # Revert to original API key
+            self.api_key = original_key
 
     async def get_accounts(self):
         result = await self.call('/accounts', {"page[size]": 100})
