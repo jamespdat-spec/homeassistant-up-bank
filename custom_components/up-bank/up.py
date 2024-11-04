@@ -1,38 +1,46 @@
 import aiohttp
 import logging
+
 _LOGGER = logging.getLogger(__name__)
 
-base = "https://api.up.com.au/api/v1"
+BASE_URL = "https://api.up.com.au/api/v1"
 
 class UP:
-    api_key = "";
-    def __init__(self, key):
-        self.api_key = key;
-
-    async def call(self, endpoint, params = {}, method="get"):
-        headers = { "Authorization": "Bearer " + self.api_key}
-        match method:
-            case "get":
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    async with session.get(base + endpoint, params=params) as resp:
-                        resp.data = await resp.json()
-                        return resp
-
-
-
-    async def test(self, api_key) -> bool:
+    def __init__(self, api_key):
         self.api_key = api_key
-        result = await self.call("/util/ping")
-        
-        return result.status == 200
-    
-    async def getAccounts(self):
-        result = await self.call('/accounts',{"page[size]": 100})
-        if(result.status != 200):
-            return False
 
-        accounts = {};
-        for account in result.data['data']:
+    async def call(self, endpoint, params=None, method="get"):
+        if params is None:
+            params = {}
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with aiohttp.ClientSession(headers=headers) as session:
+            try:
+                async with session.request(method, BASE_URL + endpoint, params=params) as resp:
+                    if resp.status == 401:
+                        _LOGGER.error("Unauthorized: Invalid API Key")
+                        return None
+                    if resp.status != 200:
+                        _LOGGER.error(f"Error: Received status code {resp.status}")
+                        return None
+                    return await resp.json()
+            except aiohttp.ClientError as e:
+                _LOGGER.error(f"Network error occurred: {e}")
+                return None
+
+    async def test(self) -> bool:
+        result = await self.call("/util/ping")
+        if result is not None:
+            return True
+        return False
+
+    async def get_accounts(self):
+        result = await self.call('/accounts', {"page[size]": 100})
+        if result is None:
+            _LOGGER.warning("Failed to retrieve accounts.")
+            return None
+
+        accounts = {}
+        for account in result.get('data', []):
             details = BankAccount(account)
             accounts[details.id] = details
         return accounts
@@ -43,6 +51,6 @@ class BankAccount:
         self.name = data['attributes']['displayName']
         self.balance = data['attributes']['balance']['value']
         self.id = data['id']
-        self.createdAt = data['attributes']['createdAt']
-        self.accountType = data['attributes']['accountType']
+        self.created_at = data['attributes']['createdAt']
+        self.account_type = data['attributes']['accountType']
         self.ownership = data['attributes']['ownershipType']
