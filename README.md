@@ -2,7 +2,7 @@ Home Assistant Up Bank Integration
 
 This integration will fetch details about all of your UP accounts, for you to use how you want. At the moment it refreshes once an hour to update balances. Ideally I would like to receive webhooks and update in real-time.
 
-Any feature requests feel free to vote or add a [discussion](https://github.com/jay-oswald/ha-up-bank/discussions) and any bugs create, or comment on an [issue](https://github.com/jay-oswald/ha-up-bank/issues)
+Any feature requests feel free to vote or add a [discussion](https://github.com/richardsj/ha-up-bank/discussions) or at the [upstream repo](https://github.com/jay-oswald/ha-up-bank/discussions)and any bugs create, or comment on an [issue](https://github.com/jay-oswald/ha-up-bank/issues)
 
 # Installation
 The easiest way is to install via HACS, see https://github.com/hacs/integration to install HACS if you haven't already.
@@ -21,3 +21,6 @@ The easiest way is to install via HACS, see https://github.com/hacs/integration 
 
 # Development
 I have included a docker-compose file with mapping, so make sure you have docker, and docker-compose installed. Then you can start it with `docker-compose up -d`. Every time you change the files you will need to restart the server inside the HA GUI for the changes to kick in.
+
+# Updated in November 2024 to run with HACS
+And has some robustness improvements, please let me know if you come up against any issues.
