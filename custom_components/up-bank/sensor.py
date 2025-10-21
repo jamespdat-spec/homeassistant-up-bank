@@ -1,199 +1,169 @@
-import logging
-from datetime import timedelta
-import async_timeout
-from homeassistant.components.number import (
-    NumberEntity,
-    NumberDeviceClass
-)
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
-from homeassistant.core import callback
+"""Sensors for the Up Bank integration."""
+from __future__ import annotations
 
-from .const import DOMAIN
-_LOGGER = logging.getLogger(__name__)
+from typing import Any, Dict, List, Optional
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
-    up = hass.data[DOMAIN][config_entry.entry_id]
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-    coordinator = UpCoordinator(hass, up)
+from . import DOMAIN, UpDataCoordinator
 
-    await coordinator.async_config_entry_first_refresh()
 
-    entities = [];
-    for account_id in coordinator.data["accounts"]:
-        entities.append(Account(coordinator, coordinator.data["accounts"][account_id]))
-    
-    individual_balance = coordinator.data['totals']['individual']['balance']
-    individual_id = coordinator.data['totals']['individual']['id']
-    entities.append(TotalSavings(
-        coordinator,
-        'individual',
-        individual_balance,
-        coordinator.data['accounts'][individual_id]
-        ))
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities,
+) -> None:
+    """Set up Up Bank sensors from a config entry."""
+    wrapper = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UpDataCoordinator = wrapper["coordinator"]
 
-    joint_balance = coordinator.data['totals']['joint']['balance']
-    joint_id = coordinator.data['totals']['joint']['id']
-    if(joint_id != ''):
-        entities.append(TotalSavings(
-            coordinator,
-            'joint',
-            joint_balance,
-            coordinator.data['accounts'][joint_id]
-            ))
-    
+    entities: List[SensorEntity] = []
 
-    async_add_entities(entities)
+    # One sensor per account balance
+    for acct in coordinator.data.get("accounts", []):
+        acct_id = acct.get("id")
+        name = (acct.get("attributes") or {}).get("displayName") or f"Up Account {acct_id}"
+        if acct_id:
+            entities.append(UpAccountBalanceSensor(coordinator, entry, acct_id, name))
 
-class UpCoordinator(DataUpdateCoordinator):
+    # Summary / total balance sensor
+    entities.append(UpTotalBalanceSensor(coordinator, entry))
 
-    def __init__(self, hass, api):
-        super().__init__(
-            hass,
-            _LOGGER,
-            name="UP Coordinator",
-            update_interval = timedelta(hours=1)
+    # Latest transaction sensors (description/amount/time)
+    entities.append(UpLatestTxnDescriptionSensor(coordinator, entry))
+    entities.append(UpLatestTxnAmountSensor(coordinator, entry))
+    entities.append(UpLatestTxnTimeSensor(coordinator, entry))
+
+    if entities:
+        async_add_entities(entities, update_before_add=True)
+
+
+class _BaseUpSensor(CoordinatorEntity[UpDataCoordinator], SensorEntity):
+    """Common bits for Up Bank sensors."""
+
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="Up Bank",
+            manufacturer="Up",
         )
 
-        self.api = api
+    @property
+    def available(self) -> bool:
+        # Available as long as last update succeeded
+        return super().available
 
-    async def _async_update_data(self):
+
+class UpAccountBalanceSensor(_BaseUpSensor):
+    """Balance sensor for a specific Up account."""
+
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry, account_id: str, display_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._account_id = account_id
+        self._display_name = display_name
+        self._attr_name = f"{display_name} Balance"
+        self._attr_icon = "mdi:bank"
+        # Use the account id in the unique_id so it stays stable
+        self._attr_unique_id = f"{entry.entry_id}_acct_{account_id}_balance"
+        # Currency unit: Up returns AUD values by default for AU users
+        self._attr_native_unit_of_measurement = "AUD"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        accounts: List[Dict[str, Any]] = self.coordinator.data.get("accounts", [])
+        for acct in accounts:
+            if acct.get("id") == self._account_id:
+                try:
+                    return float(acct["attributes"]["balance"]["value"])
+                except Exception:
+                    return None
+        return None
+
+
+class UpTotalBalanceSensor(_BaseUpSensor):
+    """Sum of all account balances."""
+
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_name = "Up Total Balance"
+        self._attr_icon = "mdi:cash-multiple"
+        self._attr_unique_id = f"{entry.entry_id}_total_balance"
+        self._attr_native_unit_of_measurement = "AUD"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        summary = self.coordinator.data.get("summary") or {}
+        value = summary.get("total_balance")
         try:
-            return await self.get_data()
-        except Exception as err:
-            raise UpdateFailed(f"Error communicating with API: {err}")
-        
-    async def get_data(self):
-        data = {}
-        data['accounts'] = await self.api.getAccounts()
-        joint = 0
-        joint_id = ''
-        individual = 0
-        individual_id = ''
-        for account_id in data['accounts']:
-            account = data['accounts'][account_id]
-            match account.accountType:
-                case 'SAVER':
-                    if account.ownership == "JOINT":
-                        joint += float(account.balance)
-                    else:
-                        individual += float(account.balance)
-                case 'TRANSACTIONAL':
-                    if account.ownership == "JOINT":
-                        joint_id = account.id
-                    else:
-                        individual_id = account.id
-        data['totals'] = {
-            'joint': {
-                'balance': joint,
-                'id': joint_id
-            },
-            'individual': {
-                'balance': individual,
-                'id': individual_id
-            }
-        }
-        return data;
-    
+            return float(value) if value is not None else None
+        except Exception:
+            return None
 
-class Account(CoordinatorEntity, NumberEntity):
-    account = {}
-    def __init__(self, coordinator, account):
-        super().__init__(coordinator, context=account)
-        self.setValues(account)
 
-    def setValues(self, account):
-        self.account = account
-        self._attr_unique_id = "up_" + account.id
-        self._attr_name = account.name
-        self.balance = account.balance
-        self._state = account.balance
-        self.id = account.id
+class _LatestTxnBase(_BaseUpSensor):
+    """Base class for latest-transaction sensors."""
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self.setValues(self.coordinator.data['accounts'][self.id])
-        self.async_write_ha_state()
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry, name_suffix: str, unique_suffix: str, icon: str) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_name = f"Up Latest Transaction {name_suffix}"
+        self._attr_unique_id = f"{entry.entry_id}_latest_txn_{unique_suffix}"
+        self._attr_icon = icon
 
     @property
-    def device_class(self):
-        return NumberDeviceClass.MONETARY
-    
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._attr_unique_id)},
-            "name": self.account.name,
-            "manufacturer": self.account.ownership,
-            "model": self.account.accountType
-        }
+    def _latest(self) -> Optional[Dict[str, Any]]:
+        txns: List[Dict[str, Any]] = self.coordinator.data.get("transactions", [])
+        return txns[0] if txns else None
+
+
+class UpLatestTxnDescriptionSensor(_LatestTxnBase):
+    """Latest transaction description."""
+
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "Description", "description", "mdi:text")
 
     @property
-    def available(self) -> bool:
-        return True
-    
-    @property
-    def state(self):
-        return self.balance
-    
-    @property
-    def mode(self):
-        return 'box'
-    
-    @property
-    def native_step(self):
-        return 0.01
+    def native_value(self) -> Optional[str]:
+        latest = self._latest
+        if not latest:
+            return None
+        return (latest.get("attributes") or {}).get("description")
 
-    
-class TotalSavings(CoordinatorEntity, NumberEntity):
-    account = {}
-    def __init__(self, coordinator, type, balance, account):
-        super().__init__(coordinator, context=account)
-        self.setValues(balance)
-        self.type = type
-        self._attr_unique_id = "up_total_savings_" + self.type
-        self.account = account
-        self._attr_name = "Total " + self.type + " savings"
-        
 
-    def setValues(self, balance):
-        self.balance = balance
-        self._state = balance
-        
+class UpLatestTxnAmountSensor(_LatestTxnBase):
+    """Latest transaction amount (AUD)."""
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self.setValues(self.coordinator.data['totals'][self.type]['balance'])
-        self.async_write_ha_state()
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "Amount", "amount", "mdi:cash")
+        self._attr_native_unit_of_measurement = "AUD"
 
     @property
-    def device_class(self):
-        return NumberDeviceClass.MONETARY
-    
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, "up_" + self.account.id)},
-            "name": self.account.name,
-            "manufacturer": self.account.ownership,
-            "model": self.account.accountType
-        }
+    def native_value(self) -> Optional[float]:
+        latest = self._latest
+        if not latest:
+            return None
+        try:
+            return float(latest["attributes"]["amount"]["value"])
+        except Exception:
+            return None
+
+
+class UpLatestTxnTimeSensor(_LatestTxnBase):
+    """Latest transaction timestamp (ISO)."""
+
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "Time", "time", "mdi:clock-outline")
 
     @property
-    def available(self) -> bool:
-        return True
-    
-    @property
-    def state(self):
-        return self.balance
-    
-    @property
-    def mode(self):
-        return 'box'
-    
-    @property
-    def native_step(self):
-        return 0.01
+    def native_value(self) -> Optional[str]:
+        latest = self._latest
+        if not latest:
+            return None
+        return (latest.get("attributes") or {}).get("createdAt")
