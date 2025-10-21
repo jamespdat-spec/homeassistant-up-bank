@@ -1,50 +1,48 @@
-"""Sensors for the Up Bank integration."""
+"""Sensors for Up Bank: per-account balances, totals, and latest txn info."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from . import DOMAIN, UpDataCoordinator
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities,
-) -> None:
-    """Set up Up Bank sensors from a config entry."""
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     wrapper = hass.data[DOMAIN][entry.entry_id]
     coordinator: UpDataCoordinator = wrapper["coordinator"]
 
     entities: List[SensorEntity] = []
 
-    # One sensor per account balance
+    # Per-account balances
     for acct in coordinator.data.get("accounts", []):
         acct_id = acct.get("id")
-        name = (acct.get("attributes") or {}).get("displayName") or f"Up Account {acct_id}"
+        display_name = (acct.get("attributes") or {}).get("displayName") or "Up Account"
         if acct_id:
-            entities.append(UpAccountBalanceSensor(coordinator, entry, acct_id, name))
+            entities.append(UpAccountBalanceSensor(coordinator, entry, acct_id, display_name))
 
-    # Summary / total balance sensor
+    # Summary sensors
     entities.append(UpTotalBalanceSensor(coordinator, entry))
+    entities.append(UpAccountCountSensor(coordinator, entry))
+    entities.append(UpTransactionCountSensor(coordinator, entry))
 
-    # Latest transaction sensors (description/amount/time)
+    # Latest txn sensors (description, amount, time, category, tags)
     entities.append(UpLatestTxnDescriptionSensor(coordinator, entry))
     entities.append(UpLatestTxnAmountSensor(coordinator, entry))
     entities.append(UpLatestTxnTimeSensor(coordinator, entry))
+    entities.append(UpLatestTxnCategorySensor(coordinator, entry))
+    entities.append(UpLatestTxnTagsSensor(coordinator, entry))
 
-    if entities:
-        async_add_entities(entities, update_before_add=True)
+    async_add_entities(entities, update_before_add=True)
 
 
+# ---------- Base ----------
 class _BaseUpSensor(CoordinatorEntity[UpDataCoordinator], SensorEntity):
-    """Common bits for Up Bank sensors."""
-
     _attr_should_poll = False
 
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
@@ -56,30 +54,25 @@ class _BaseUpSensor(CoordinatorEntity[UpDataCoordinator], SensorEntity):
             manufacturer="Up",
         )
 
-    @property
-    def available(self) -> bool:
-        # Available as long as last update succeeded
-        return super().available
 
-
+# ---------- Per-account ----------
 class UpAccountBalanceSensor(_BaseUpSensor):
-    """Balance sensor for a specific Up account."""
+    """Balance for a specific account."""
 
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry, account_id: str, display_name: str) -> None:
         super().__init__(coordinator, entry)
+        slug = slugify(display_name) or account_id
         self._account_id = account_id
-        self._display_name = display_name
+        self._attr_unique_id = f"{entry.entry_id}_acct_{account_id}_balance"
         self._attr_name = f"{display_name} Balance"
         self._attr_icon = "mdi:bank"
-        # Use the account id in the unique_id so it stays stable
-        self._attr_unique_id = f"{entry.entry_id}_acct_{account_id}_balance"
-        # Currency unit: Up returns AUD values by default for AU users
         self._attr_native_unit_of_measurement = "AUD"
+        # Provide a friendly default entity_id like sensor.spending_balance
+        self.entity_id = f"sensor.{slug}_balance"
 
     @property
     def native_value(self) -> Optional[float]:
-        accounts: List[Dict[str, Any]] = self.coordinator.data.get("accounts", [])
-        for acct in accounts:
+        for acct in self.coordinator.data.get("accounts", []):
             if acct.get("id") == self._account_id:
                 try:
                     return float(acct["attributes"]["balance"]["value"])
@@ -88,82 +81,130 @@ class UpAccountBalanceSensor(_BaseUpSensor):
         return None
 
 
+# ---------- Summary ----------
 class UpTotalBalanceSensor(_BaseUpSensor):
-    """Sum of all account balances."""
-
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_total_balance"
         self._attr_name = "Up Total Balance"
         self._attr_icon = "mdi:cash-multiple"
-        self._attr_unique_id = f"{entry.entry_id}_total_balance"
         self._attr_native_unit_of_measurement = "AUD"
+        self.entity_id = "sensor.up_total_balance"
 
     @property
     def native_value(self) -> Optional[float]:
         summary = self.coordinator.data.get("summary") or {}
-        value = summary.get("total_balance")
+        val = summary.get("total_balance")
         try:
-            return float(value) if value is not None else None
+            return float(val) if val is not None else None
         except Exception:
             return None
 
 
-class _LatestTxnBase(_BaseUpSensor):
-    """Base class for latest-transaction sensors."""
-
-    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry, name_suffix: str, unique_suffix: str, icon: str) -> None:
+class UpAccountCountSensor(_BaseUpSensor):
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_name = f"Up Latest Transaction {name_suffix}"
+        self._attr_unique_id = f"{entry.entry_id}_account_count"
+        self._attr_name = "Up Account Count"
+        self._attr_icon = "mdi:counter"
+
+    @property
+    def native_value(self) -> Optional[int]:
+        return len(self.coordinator.data.get("accounts", []))
+
+
+class UpTransactionCountSensor(_BaseUpSensor):
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_transaction_count"
+        self._attr_name = "Up Transaction Count"
+        self._attr_icon = "mdi:counter"
+
+    @property
+    def native_value(self) -> Optional[int]:
+        return len(self.coordinator.data.get("transactions", []))
+
+
+# ---------- Latest transaction ----------
+class _LatestTxnBase(_BaseUpSensor):
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry, suffix: str, unique_suffix: str, icon: str) -> None:
+        super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_latest_txn_{unique_suffix}"
+        self._attr_name = f"Up Latest Transaction {suffix}"
         self._attr_icon = icon
 
     @property
     def _latest(self) -> Optional[Dict[str, Any]]:
-        txns: List[Dict[str, Any]] = self.coordinator.data.get("transactions", [])
-        return txns[0] if txns else None
+        tx = self.coordinator.data.get("transactions", [])
+        return tx[0] if tx else None
 
 
 class UpLatestTxnDescriptionSensor(_LatestTxnBase):
-    """Latest transaction description."""
-
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry, "Description", "description", "mdi:text")
 
     @property
     def native_value(self) -> Optional[str]:
-        latest = self._latest
-        if not latest:
+        lt = self._latest
+        if not lt:
             return None
-        return (latest.get("attributes") or {}).get("description")
+        return (lt.get("attributes") or {}).get("description")
 
 
 class UpLatestTxnAmountSensor(_LatestTxnBase):
-    """Latest transaction amount (AUD)."""
-
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry, "Amount", "amount", "mdi:cash")
         self._attr_native_unit_of_measurement = "AUD"
 
     @property
     def native_value(self) -> Optional[float]:
-        latest = self._latest
-        if not latest:
+        lt = self._latest
+        if not lt:
             return None
         try:
-            return float(latest["attributes"]["amount"]["value"])
+            return float(lt["attributes"]["amount"]["value"])
         except Exception:
             return None
 
 
 class UpLatestTxnTimeSensor(_LatestTxnBase):
-    """Latest transaction timestamp (ISO)."""
-
     def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry, "Time", "time", "mdi:clock-outline")
 
     @property
     def native_value(self) -> Optional[str]:
-        latest = self._latest
-        if not latest:
+        lt = self._latest
+        if not lt:
             return None
-        return (latest.get("attributes") or {}).get("createdAt")
+        return (lt.get("attributes") or {}).get("createdAt")
+
+
+class UpLatestTxnCategorySensor(_LatestTxnBase):
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "Category", "category", "mdi:shape-outline")
+
+    @property
+    def native_value(self) -> Optional[str]:
+        lt = self._latest
+        if not lt:
+            return None
+        rel = (lt.get("relationships") or {}).get("category") or {}
+        data = rel.get("data") or {}
+        return data.get("id")  # returns category id (can be mapped to name via categories)
+
+
+class UpLatestTxnTagsSensor(_LatestTxnBase):
+    def __init__(self, coordinator: UpDataCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "Tags", "tags", "mdi:tag-multiple")
+
+    @property
+    def native_value(self) -> Optional[str]:
+        lt = self._latest
+        if not lt:
+            return None
+        rel = (lt.get("relationships") or {}).get("tags") or {}
+        data = rel.get("data") or []
+        # Return comma-separated tag IDs (Up's API returns ids for tags)
+        if not data:
+            return ""
+        return ", ".join([d.get("id", "") for d in data if isinstance(d, dict)])
